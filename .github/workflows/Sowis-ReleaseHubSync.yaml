@@ -1,0 +1,95 @@
+name: Sowis Release Hub Sync
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  release-hub-sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Read deployment metadata
+        id: metadata
+        shell: pwsh
+        run: |
+          $manifest = Get-Content ".deployment/manifest.json" -Raw | ConvertFrom-Json
+          $deployment = Get-Content ".deployment/deployment.json" -Raw | ConvertFrom-Json
+
+          Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "releaseName=$($manifest.releaseName)"
+          Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "bcMajor=$($manifest.bcMajor)"
+          Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "deploymentType=$($deployment.deploymentType)"
+          Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "createReleaseHubEntry=$($deployment.createReleaseHubEntry)"
+          Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "createConsultantBundle=$($deployment.createConsultantBundle)"
+
+      - name: Download release assets
+        if: steps.metadata.outputs.createConsultantBundle == 'True'
+        shell: bash
+        run: |
+          mkdir -p .release-assets
+          gh release download "${{ github.event.release.tag_name }}" \
+            --repo "${{ github.repository }}" \
+            --dir .release-assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Login to Azure
+        if: steps.metadata.outputs.createConsultantBundle == 'True'
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Upload release assets to Blob Storage
+        if: steps.metadata.outputs.createConsultantBundle == 'True'
+        shell: bash
+        run: |
+          az storage blob upload-batch \
+            --account-name "${{ vars.RELEASE_HUB_STORAGE_ACCOUNT }}" \
+            --destination "${{ vars.RELEASE_HUB_CONTAINER }}" \
+            --source ".release-assets" \
+            --destination-path "${{ github.repository }}/${{ github.event.release.tag_name }}" \
+            --auth-mode login \
+            --overwrite true
+
+      - name: Call Release Hub Function
+        if: steps.metadata.outputs.createReleaseHubEntry == 'True'
+        shell: bash
+        run: |
+          BUNDLE_URL=""
+
+          if [ "${{ steps.metadata.outputs.createConsultantBundle }}" = "True" ]; then
+            BUNDLE_URL="https://${{ vars.RELEASE_HUB_STORAGE_ACCOUNT }}.blob.core.windows.net/${{ vars.RELEASE_HUB_CONTAINER }}/${{ github.repository }}/${{ github.event.release.tag_name }}"
+          fi
+
+          RELEASE_TYPE="Release"
+          if [ "${{ github.event.release.prerelease }}" = "true" ]; then
+            RELEASE_TYPE="Release Candidate"
+          fi
+
+          curl -f -X POST "${{ secrets.RELEASE_HUB_FUNCTION_URL }}" \
+            -H "Content-Type: application/json" \
+            -H "x-release-hub-secret: ${{ secrets.RELEASE_HUB_SECRET }}" \
+            -d "{
+              \"source\": \"github-release\",
+              \"repository\": \"${{ github.repository }}\",
+              \"owner\": \"${{ github.repository_owner }}\",
+              \"repo\": \"${{ github.event.repository.name }}\",
+              \"releaseName\": \"${{ steps.metadata.outputs.releaseName }}\",
+              \"bcMajor\": ${{ steps.metadata.outputs.bcMajor }},
+              \"deploymentType\": \"${{ steps.metadata.outputs.deploymentType }}\",
+              \"version\": \"${{ github.event.release.tag_name }}\",
+              \"tagName\": \"${{ github.event.release.tag_name }}\",
+              \"releaseType\": \"$RELEASE_TYPE\",
+              \"releaseUrl\": \"${{ github.event.release.html_url }}\",
+              \"isPrerelease\": ${{ github.event.release.prerelease }},
+              \"publishedAt\": \"${{ github.event.release.published_at }}\",
+              \"releaseDate\": \"${{ github.event.release.published_at }}\",
+              \"bundleUrl\": \"$BUNDLE_URL\"
+            }"
