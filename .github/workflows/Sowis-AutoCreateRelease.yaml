@@ -8,7 +8,6 @@ on:
 permissions:
   contents: write
   actions: read
-  id-token: write
 
 jobs:
   auto-release:
@@ -67,13 +66,11 @@ jobs:
 
           if ($branchName -eq "main" -or $branchName -eq "master") {
             $packageType = "Release"
-            $releaseFolder = "releases"
             $tag = $semverTag
             $prerelease = "false"
           }
           elseif ($branchName -like "release/*") {
             $packageType = "Release Candidate"
-            $releaseFolder = "release-candidates"
             $tag = "$semverTag-rc"
             $prerelease = "true"
           }
@@ -89,12 +86,12 @@ jobs:
           Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "title=$title"
           Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "prerelease=$prerelease"
           Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "packageType=$packageType"
-          Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "releaseFolder=$releaseFolder"
 
       - name: Prepare release assets
         shell: pwsh
         run: |
           $out = "release-assets"
+
           if (Test-Path $out) {
             Remove-Item $out -Recurse -Force
           }
@@ -108,7 +105,11 @@ jobs:
 
           foreach ($dir in $assetDirs) {
             $zipPath = Join-Path $out "$($dir.Name).zip"
-            Compress-Archive -Path (Join-Path $dir.FullName "*") -DestinationPath $zipPath -Force
+
+            Compress-Archive `
+              -Path (Join-Path $dir.FullName "*") `
+              -DestinationPath $zipPath `
+              -Force
           }
 
       - name: Create GitHub release
@@ -129,7 +130,11 @@ jobs:
             throw "No release assets found."
           }
 
-          gh release delete $tag --repo "${{ github.repository }}" --yes --cleanup-tag --quiet 2>$null
+          gh release delete $tag `
+            --repo "${{ github.repository }}" `
+            --yes `
+            --cleanup-tag `
+            --quiet 2>$null
 
           $args = @("release", "create", $tag)
           $args += $assets
@@ -149,7 +154,7 @@ jobs:
           $releaseUrl = gh release view $tag --repo "${{ github.repository }}" --json url --jq ".url"
           Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "releaseUrl=$releaseUrl"
 
-      - name: Call Release Hub Function
+      - name: Call BC Platform Automation
         if: steps.metadata.outputs.createReleaseHubEntry == 'True'
         shell: pwsh
         run: |
@@ -169,9 +174,13 @@ jobs:
             bundleUrl = ""
           } | ConvertTo-Json -Depth 20
 
+          $headers = @{
+              "x-bc-platform-secret" = "${{ secrets.BC_PLATFORM_AUTOMATION_SECRET }}"
+          }
+
           Invoke-RestMethod `
-            -Method Post `
-            -Uri "${{ secrets.RELEASE_HUB_FUNCTION_URL }}" `
-            -Headers @{ "x-release-hub-secret" = "${{ secrets.RELEASE_HUB_SECRET }}" } `
-            -ContentType "application/json" `
-            -Body $payload
+              -Method Post `
+              -Uri "${{ secrets.BC_PLATFORM_AUTOMATION_URL }}/api/release" `
+              -Headers $headers `
+              -ContentType "application/json" `
+              -Body $payload
