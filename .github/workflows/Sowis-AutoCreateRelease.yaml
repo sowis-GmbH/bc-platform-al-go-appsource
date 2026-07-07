@@ -37,7 +37,7 @@ jobs:
           Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "deploymentType=$($deployment.deploymentType)"
           Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "createReleaseHubEntry=$($deployment.createReleaseHubEntry)"
           Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "createConsultantBundle=$($deployment.createConsultantBundle)"
-          Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "uploadConsultantBundle=$($deployment.uploadConsultantBundle)"
+          Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "publishBundleUrl=$($deployment.publishBundleUrl)"
 
       - name: Download build artifacts
         uses: actions/download-artifact@v4
@@ -169,7 +169,7 @@ jobs:
 
       - name: Upload consultant bundle to Azure Blob Storage
         id: blob
-        if: steps.metadata.outputs.uploadConsultantBundle == 'True'
+        if: steps.metadata.outputs.publishBundleUrl == 'True'
         shell: pwsh
         env:
           AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
@@ -204,58 +204,62 @@ jobs:
           $appVersion = "${{ steps.release.outputs.appVersion }}"
           $releaseFolder = "${{ steps.release.outputs.releaseFolder }}"
 
-           $bundleAssets = Get-ChildItem -Path "release-assets" -Filter "*ConsultantBundle*.zip"
+          $bundleAssets = Get-ChildItem -Path "release-assets" -Filter "*ConsultantBundle*.zip"
+
+          if (-not $bundleAssets -or $bundleAssets.Count -eq 0) {
+              Write-Host "No ConsultantBundle asset found. Falling back to Apps asset."
+              $bundleAssets = Get-ChildItem -Path "release-assets" -Filter "*Apps*.zip"
+          }
           
           if (-not $bundleAssets -or $bundleAssets.Count -eq 0) {
-            Write-Host "No ConsultantBundle asset found. Falling back to Apps asset."
-            $bundleAssets = Get-ChildItem -Path "release-assets" -Filter "*Apps*.zip"
+              Write-Host "No ConsultantBundle or Apps asset found. Skipping Blob Storage upload."
+              exit 0
           }
           
-          if (-not $bundleAssets -or $bundleAssets.Count -eq 0) {
-            Write-Host "No ConsultantBundle or Apps asset found. Skipping Blob Storage upload."
-            exit 0
-          }
-
-          if (-not $consultantBundles -or $consultantBundles.Count -eq 0) {
-            Write-Host "No ConsultantBundle asset found. Skipping Blob Storage upload."
-            exit 0
-          }
-
           $bundleUrls = @()
-
+          
           foreach ($bundle in $bundleAssets) {
-            $safeBundleName = $bundle.Name -replace "\s+", "-"
-            $blobName = "$customerSlug/$releaseFolder/$appVersion/$safeBundleName"
-
-            az storage blob upload `
-              --account-name $storageAccountName `
-              --container-name $containerName `
-              --name $blobName `
-              --file $bundle.FullName `
-              --auth-mode login `
-              --overwrite true
-
-            $expiry = (Get-Date).ToUniversalTime().AddDays(7).ToString("yyyy-MM-ddTHH:mm:ssZ")
-
-            $sasToken = az storage blob generate-sas `
-              --account-name $storageAccountName `
-              --container-name $containerName `
-              --name $blobName `
-              --permissions r `
-              --expiry $expiry `
-              --auth-mode login `
-              --as-user `
-              --output tsv
-
-            if (-not $sasToken) {
-              throw "SAS token could not be generated."
-            }
-
-            $blobUrl = "https://$storageAccountName.blob.core.windows.net/$containerName/$blobName`?$sasToken"
-            $bundleUrls += $blobUrl
+              $safeBundleName = $bundle.Name -replace "\s+", "-"
+              $blobName = "$customerSlug/$releaseFolder/$appVersion/$safeBundleName"
+          
+              Write-Host "Uploading bundle to Azure Blob Storage"
+              Write-Host "Storage Account: $storageAccountName"
+              Write-Host "Container: $containerName"
+              Write-Host "Blob: $blobName"
+          
+              az storage blob upload `
+                  --account-name $storageAccountName `
+                  --container-name $containerName `
+                  --name $blobName `
+                  --file $bundle.FullName `
+                  --auth-mode login `
+                  --overwrite true
+          
+              $expiry = (Get-Date).ToUniversalTime().AddDays(7).ToString("yyyy-MM-ddTHH:mm:ssZ")
+          
+              $sasToken = az storage blob generate-sas `
+                  --account-name $storageAccountName `
+                  --container-name $containerName `
+                  --name $blobName `
+                  --permissions r `
+                  --expiry $expiry `
+                  --auth-mode login `
+                  --as-user `
+                  --output tsv
+          
+              if (-not $sasToken) {
+                  throw "SAS token could not be generated."
+              }
+          
+              $blobUrl = "https://$storageAccountName.blob.core.windows.net/$containerName/$blobName`?$sasToken"
+          
+              $bundleUrls += $blobUrl
+          
+              Write-Host "Bundle download URL created."
           }
-
+          
           $bundleUrl = $bundleUrls[0]
+          
           Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "bundleUrl=$bundleUrl"
 
       - name: Call BC Platform Automation
