@@ -37,6 +37,7 @@ jobs:
           Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "deploymentType=$($deployment.deploymentType)"
           Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "createReleaseHubEntry=$($deployment.createReleaseHubEntry)"
           Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "createConsultantBundle=$($deployment.createConsultantBundle)"
+          Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "uploadConsultantBundle=$($deployment.uploadConsultantBundle)"
 
       - name: Download build artifacts
         uses: actions/download-artifact@v4
@@ -63,19 +64,21 @@ jobs:
 
           $appVersionRaw = [regex]::Match($appArtifactDir.Name, "-Apps-(\d+\.\d+\.\d+\.\d+)$").Groups[1].Value
           $bcMajor = "${{ steps.metadata.outputs.bcMajor }}"
-          
+
           $parts = $appVersionRaw.Split(".")
           $appVersion = "$bcMajor.$($parts[1]).$($parts[2]).$($parts[3])"
-          
+
           $semverTag = $appVersion -replace "\.0$", ""
 
           if ($branchName -eq "main" -or $branchName -eq "master") {
             $packageType = "Release"
+            $releaseFolder = "releases"
             $tag = $semverTag
             $prerelease = "false"
           }
           elseif ($branchName -like "release/*") {
             $packageType = "Release Candidate"
+            $releaseFolder = "release-candidates"
             $tag = "$semverTag-rc"
             $prerelease = "true"
           }
@@ -91,6 +94,7 @@ jobs:
           Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "title=$title"
           Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "prerelease=$prerelease"
           Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "packageType=$packageType"
+          Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "releaseFolder=$releaseFolder"
 
       - name: Prepare release assets
         shell: pwsh
@@ -106,7 +110,10 @@ jobs:
           $appVersion = "${{ steps.release.outputs.appVersion }}"
 
           $assetDirs = Get-ChildItem -Path "release-artifacts" -Directory |
-            Where-Object { $_.Name -match "-Apps-$appVersion$" }
+            Where-Object {
+              $_.Name -match "-Apps-$appVersion$" -or
+              $_.Name -match "-ConsultantBundle-$appVersion$"
+            }
 
           foreach ($dir in $assetDirs) {
             $zipPath = Join-Path $out "$($dir.Name).zip"
@@ -159,6 +166,94 @@ jobs:
           $releaseUrl = gh release view $tag --repo "${{ github.repository }}" --json url --jq ".url"
           Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "releaseUrl=$releaseUrl"
 
+      - name: Upload consultant bundle to Azure Blob Storage
+        id: blob
+        if: steps.metadata.outputs.uploadConsultantBundle == 'True'
+        shell: pwsh
+        env:
+          AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+        run: |
+          $azureCredentials = $env:AZURE_CREDENTIALS | ConvertFrom-Json
+
+          if (-not $azureCredentials.StorageAccountName) {
+            throw "StorageAccountName is missing in AZURE_CREDENTIALS."
+          }
+
+          $storageAccountName = $azureCredentials.StorageAccountName
+          $containerName = "releases"
+
+          az login `
+            --service-principal `
+            --username $azureCredentials.ClientId `
+            --password $azureCredentials.ClientSecret `
+            --tenant $azureCredentials.TenantId
+
+          az account set --subscription $azureCredentials.SubscriptionId
+
+          $releaseName = "${{ steps.metadata.outputs.releaseName }}"
+
+          $customerSlug = $releaseName.ToLowerInvariant()
+          $customerSlug = $customerSlug -replace "ä", "ae"
+          $customerSlug = $customerSlug -replace "ö", "oe"
+          $customerSlug = $customerSlug -replace "ü", "ue"
+          $customerSlug = $customerSlug -replace "ß", "ss"
+          $customerSlug = $customerSlug -replace "[^a-z0-9]+", "-"
+          $customerSlug = $customerSlug.Trim("-")
+
+          $appVersion = "${{ steps.release.outputs.appVersion }}"
+          $releaseFolder = "${{ steps.release.outputs.releaseFolder }}"
+
+          $consultantBundles = Get-ChildItem -Path "release-assets" -Filter "*ConsultantBundle*.zip"
+
+          if (-not $consultantBundles -or $consultantBundles.Count -eq 0) {
+            Write-Host "No ConsultantBundle asset found. Skipping Blob Storage upload."
+            exit 0
+          }
+
+          $bundleUrls = @()
+
+          foreach ($bundle in $consultantBundles) {
+            $safeBundleName = $bundle.Name -replace "\s+", "-"
+            $blobName = "$customerSlug/$releaseFolder/$appVersion/$safeBundleName"
+
+            Write-Host "Uploading Consultant Bundle to Azure Blob Storage"
+            Write-Host "Storage Account: $storageAccountName"
+            Write-Host "Container: $containerName"
+            Write-Host "Blob: $blobName"
+
+            az storage blob upload `
+              --account-name $storageAccountName `
+              --container-name $containerName `
+              --name $blobName `
+              --file $bundle.FullName `
+              --auth-mode login `
+              --overwrite true
+
+            $expiry = (Get-Date).ToUniversalTime().AddDays(7).ToString("yyyy-MM-ddTHH:mm:ssZ")
+
+            $sasToken = az storage blob generate-sas `
+              --account-name $storageAccountName `
+              --container-name $containerName `
+              --name $blobName `
+              --permissions r `
+              --expiry $expiry `
+              --auth-mode login `
+              --as-user `
+              --output tsv
+
+            if (-not $sasToken) {
+              throw "SAS token could not be generated."
+            }
+
+            $blobUrl = "https://$storageAccountName.blob.core.windows.net/$containerName/$blobName`?$sasToken"
+            $bundleUrls += $blobUrl
+
+            Write-Host "Consultant Bundle download URL created."
+          }
+
+          $bundleUrl = $bundleUrls[0]
+          Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "bundleUrl=$bundleUrl"
+
       - name: Call BC Platform Automation
         if: steps.metadata.outputs.createReleaseHubEntry == 'True'
         shell: pwsh
@@ -176,7 +271,7 @@ jobs:
             releaseType = "${{ steps.release.outputs.packageType }}"
             releaseUrl = "${{ steps.githubRelease.outputs.releaseUrl }}"
             releaseDate = "$(Get-Date -Format yyyy-MM-dd)"
-            bundleUrl = ""
+            bundleUrl = "${{ steps.blob.outputs.bundleUrl }}"
           } | ConvertTo-Json -Depth 20
 
           $headers = @{
