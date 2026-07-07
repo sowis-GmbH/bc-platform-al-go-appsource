@@ -62,10 +62,10 @@ jobs:
             throw "No AL-Go app artifact found."
           }
 
-          $appVersionRaw = [regex]::Match($appArtifactDir.Name, "-Apps-(\d+\.\d+\.\d+\.\d+)$").Groups[1].Value
+          $artifactVersion = [regex]::Match($appArtifactDir.Name, "-Apps-(\d+\.\d+\.\d+\.\d+)$").Groups[1].Value
           $bcMajor = "${{ steps.metadata.outputs.bcMajor }}"
 
-          $parts = $appVersionRaw.Split(".")
+          $parts = $artifactVersion.Split(".")
           $appVersion = "$bcMajor.$($parts[1]).$($parts[2]).$($parts[3])"
 
           $semverTag = $appVersion -replace "\.0$", ""
@@ -89,6 +89,7 @@ jobs:
 
           $title = "$releaseName $packageType $appVersion"
 
+          Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "artifactVersion=$artifactVersion"
           Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "appVersion=$appVersion"
           Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "tag=$tag"
           Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "title=$title"
@@ -107,12 +108,12 @@ jobs:
 
           New-Item -ItemType Directory -Path $out -Force | Out-Null
 
-          $appVersion = "${{ steps.release.outputs.appVersion }}"
+          $artifactVersion = "${{ steps.release.outputs.artifactVersion }}"
 
           $assetDirs = Get-ChildItem -Path "release-artifacts" -Directory |
             Where-Object {
-              $_.Name -match "-Apps-$appVersion$" -or
-              $_.Name -match "-ConsultantBundle-$appVersion$"
+              $_.Name -match "-Apps-$artifactVersion$" -or
+              $_.Name -match "-ConsultantBundle-$artifactVersion$"
             }
 
           foreach ($dir in $assetDirs) {
@@ -216,11 +217,6 @@ jobs:
             $safeBundleName = $bundle.Name -replace "\s+", "-"
             $blobName = "$customerSlug/$releaseFolder/$appVersion/$safeBundleName"
 
-            Write-Host "Uploading Consultant Bundle to Azure Blob Storage"
-            Write-Host "Storage Account: $storageAccountName"
-            Write-Host "Container: $containerName"
-            Write-Host "Blob: $blobName"
-
             az storage blob upload `
               --account-name $storageAccountName `
               --container-name $containerName `
@@ -247,8 +243,6 @@ jobs:
 
             $blobUrl = "https://$storageAccountName.blob.core.windows.net/$containerName/$blobName`?$sasToken"
             $bundleUrls += $blobUrl
-
-            Write-Host "Consultant Bundle download URL created."
           }
 
           $bundleUrl = $bundleUrls[0]
