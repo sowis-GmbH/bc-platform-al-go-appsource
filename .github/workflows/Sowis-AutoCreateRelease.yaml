@@ -204,7 +204,17 @@ jobs:
           $appVersion = "${{ steps.release.outputs.appVersion }}"
           $releaseFolder = "${{ steps.release.outputs.releaseFolder }}"
 
-          $consultantBundles = Get-ChildItem -Path "release-assets" -Filter "*ConsultantBundle*.zip"
+           $bundleAssets = Get-ChildItem -Path "release-assets" -Filter "*ConsultantBundle*.zip"
+          
+          if (-not $bundleAssets -or $bundleAssets.Count -eq 0) {
+            Write-Host "No ConsultantBundle asset found. Falling back to Apps asset."
+            $bundleAssets = Get-ChildItem -Path "release-assets" -Filter "*Apps*.zip"
+          }
+          
+          if (-not $bundleAssets -or $bundleAssets.Count -eq 0) {
+            Write-Host "No ConsultantBundle or Apps asset found. Skipping Blob Storage upload."
+            exit 0
+          }
 
           if (-not $consultantBundles -or $consultantBundles.Count -eq 0) {
             Write-Host "No ConsultantBundle asset found. Skipping Blob Storage upload."
@@ -213,7 +223,7 @@ jobs:
 
           $bundleUrls = @()
 
-          foreach ($bundle in $consultantBundles) {
+          foreach ($bundle in $bundleAssets) {
             $safeBundleName = $bundle.Name -replace "\s+", "-"
             $blobName = "$customerSlug/$releaseFolder/$appVersion/$safeBundleName"
 
