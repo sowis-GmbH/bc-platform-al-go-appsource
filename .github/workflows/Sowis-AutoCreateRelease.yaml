@@ -61,7 +61,12 @@ jobs:
             throw "No AL-Go app artifact found."
           }
 
-          $appVersion = [regex]::Match($appArtifactDir.Name, "-Apps-(\d+\.\d+\.\d+\.\d+)$").Groups[1].Value
+          $appVersionRaw = [regex]::Match($appArtifactDir.Name, "-Apps-(\d+\.\d+\.\d+\.\d+)$").Groups[1].Value
+          $bcMajor = "${{ steps.metadata.outputs.bcMajor }}"
+          
+          $parts = $appVersionRaw.Split(".")
+          $appVersion = "$bcMajor.$($parts[1]).$($parts[2]).$($parts[3])"
+          
           $semverTag = $appVersion -replace "\.0$", ""
 
           if ($branchName -eq "main" -or $branchName -eq "master") {
