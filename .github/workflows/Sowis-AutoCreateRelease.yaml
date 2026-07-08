@@ -184,7 +184,7 @@ jobs:
             releaseType = "${{ steps.release.outputs.packageType }}"
             releaseUrl = "${{ steps.githubRelease.outputs.releaseUrl }}"
             releaseDate = "$(Get-Date -Format yyyy-MM-dd)"
-            bundleUrl = ""
+            bundleUrl = "${{ steps.githubRelease.outputs.releaseUrl }}"
           } | ConvertTo-Json -Depth 20
 
           $headers = @{
