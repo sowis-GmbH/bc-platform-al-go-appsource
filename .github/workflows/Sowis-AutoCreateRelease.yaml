@@ -1,292 +1,195 @@
 name: "Sowis Auto Create Release"
 
 on:
-workflow_run:
-workflows: ["CI/CD"]
-types: [completed]
+  workflow_run:
+    workflows: ["CI/CD"]
+    types: [completed]
 
 permissions:
-contents: write
-actions: read
+  contents: write
+  actions: read
 
 jobs:
-auto-release:
-if: >
-     github.event.workflow_run.conclusion == 'success' &&
-     (
-       github.event.workflow_run.head_branch == 'main' ||
-       startsWith(github.event.workflow_run.head_branch, 'release/')
-     )
-   runs-on: ubuntu-latest-m
+  auto-release:
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      (
+        github.event.workflow_run.head_branch == 'main' ||
+        startsWith(github.event.workflow_run.head_branch, 'release/')
+      )
+    runs-on: ubuntu-latest-m
 
-steps:
-- name: Checkout
-uses: actions/checkout@v6
-with:
-ref: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
-- name: Read deployment metadata
-id: metadata
-shell: pwsh
-run: |
-         $manifest = Get-Content ".deployment/manifest.json" -Raw | ConvertFrom-Json
-         $deployment = Get-Content ".deployment/deployment.json" -Raw | ConvertFrom-Json
+      - name: Read deployment metadata
+        id: metadata
+        shell: pwsh
+        run: |
+          $manifest = Get-Content ".deployment/manifest.json" -Raw | ConvertFrom-Json
+          $deployment = Get-Content ".deployment/deployment.json" -Raw | ConvertFrom-Json
 
-         Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "releaseName=$($manifest.releaseName)"
-         Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "bcMajor=$($manifest.bcMajor)"
-         Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "deploymentType=$($deployment.deploymentType)"
-         Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "createReleaseHubEntry=$($deployment.createReleaseHubEntry)"
-         Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "createConsultantBundle=$($deployment.createConsultantBundle)"
-          Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "uploadConsultantBundle=$($deployment.uploadConsultantBundle)"
-          Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "publishBundleUrl=$($deployment.publishBundleUrl)"
+          Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "releaseName=$($manifest.releaseName)"
+          Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "bcMajor=$($manifest.bcMajor)"
+          Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "deploymentType=$($deployment.deploymentType)"
+          Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "createReleaseHubEntry=$($deployment.createReleaseHubEntry)"
+          Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "createConsultantBundle=$($deployment.createConsultantBundle)"
 
-     - name: Download build artifacts
-uses: actions/download-artifact@v4
-with:
-run-id: ${{ github.event.workflow_run.id }}
-github-token: ${{ github.token }}
-path: release-artifacts
-merge-multiple: false
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+          path: release-artifacts
+          merge-multiple: false
 
-- name: Resolve release values
-id: release
-shell: pwsh
-run: |
-         $branchName = "${{ github.event.workflow_run.head_branch }}"
-         $releaseName = "${{ steps.metadata.outputs.releaseName }}"
+      - name: Resolve release values
+        id: release
+        shell: pwsh
+        run: |
+          $branchName = "${{ github.event.workflow_run.head_branch }}"
+          $releaseName = "${{ steps.metadata.outputs.releaseName }}"
 
-         $appArtifactDir = Get-ChildItem -Path "release-artifacts" -Directory |
-           Where-Object { $_.Name -match "-Apps-(?<version>\d+\.\d+\.\d+\.\d+)$" } |
-           Select-Object -First 1
+          $appArtifactDir = Get-ChildItem -Path "release-artifacts" -Directory |
+            Where-Object { $_.Name -match "-Apps-(?<version>\d+\.\d+\.\d+\.\d+)$" } |
+            Select-Object -First 1
 
-         if (!$appArtifactDir) {
-           throw "No AL-Go app artifact found."
-         }
+          if (!$appArtifactDir) {
+            throw "No AL-Go app artifact found."
+          }
 
-         $artifactVersion = [regex]::Match($appArtifactDir.Name, "-Apps-(\d+\.\d+\.\d+\.\d+)$").Groups[1].Value
-         $bcMajor = "${{ steps.metadata.outputs.bcMajor }}"
+          $artifactVersion = [regex]::Match($appArtifactDir.Name, "-Apps-(\d+\.\d+\.\d+\.\d+)$").Groups[1].Value
+          $bcMajor = "${{ steps.metadata.outputs.bcMajor }}"
 
-         $parts = $artifactVersion.Split(".")
-         $appVersion = "$bcMajor.$($parts[1]).$($parts[2]).$($parts[3])"
+          $parts = $artifactVersion.Split(".")
+          $appVersion = "$bcMajor.$($parts[1]).$($parts[2]).$($parts[3])"
 
-         $semverTag = $appVersion -replace "\.0$", ""
+          $semverTag = $appVersion -replace "\.0$", ""
 
-         if ($branchName -eq "main" -or $branchName -eq "master") {
-           $packageType = "Release"
-           $releaseFolder = "releases"
-           $tag = $semverTag
-           $prerelease = "false"
-         }
-         elseif ($branchName -like "release/*") {
-           $packageType = "Release Candidate"
-           $releaseFolder = "release-candidates"
-           $tag = "$semverTag-rc"
-           $prerelease = "true"
-         }
-         else {
-           Write-Host "No release for branch: $branchName"
-           exit 0
-         }
+          if ($branchName -eq "main" -or $branchName -eq "master") {
+            $packageType = "Release"
+            $tag = $semverTag
+            $prerelease = "false"
+          }
+          elseif ($branchName -like "release/*") {
+            $packageType = "Release Candidate"
+            $tag = "$semverTag-rc"
+            $prerelease = "true"
+          }
+          else {
+            Write-Host "No release for branch: $branchName"
+            exit 0
+          }
 
-         $title = "$releaseName $packageType $appVersion"
+          $title = "$releaseName $packageType $appVersion"
 
-         Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "artifactVersion=$artifactVersion"
-         Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "appVersion=$appVersion"
-         Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "tag=$tag"
-         Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "title=$title"
-         Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "prerelease=$prerelease"
-         Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "packageType=$packageType"
-         Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "releaseFolder=$releaseFolder"
+          Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "artifactVersion=$artifactVersion"
+          Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "appVersion=$appVersion"
+          Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "tag=$tag"
+          Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "title=$title"
+          Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "prerelease=$prerelease"
+          Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "packageType=$packageType"
 
-     - name: Prepare release assets
-shell: pwsh
-run: |
-         $out = "release-assets"
+      - name: Prepare release assets
+        shell: pwsh
+        run: |
+          $out = "release-assets"
 
-         if (Test-Path $out) {
-           Remove-Item $out -Recurse -Force
-         }
+          if (Test-Path $out) {
+            Remove-Item $out -Recurse -Force
+          }
 
-         New-Item -ItemType Directory -Path $out -Force | Out-Null
+          New-Item -ItemType Directory -Path $out -Force | Out-Null
 
-         $artifactVersion = "${{ steps.release.outputs.artifactVersion }}"
+          $artifactVersion = "${{ steps.release.outputs.artifactVersion }}"
 
-         $assetDirs = Get-ChildItem -Path "release-artifacts" -Directory |
-           Where-Object {
-             $_.Name -match "-Apps-$artifactVersion$" -or
-             $_.Name -match "-ConsultantBundle-$artifactVersion$"
-           }
+          $assetDirs = Get-ChildItem -Path "release-artifacts" -Directory |
+            Where-Object {
+              $_.Name -match "-Apps-$artifactVersion$" -or
+              $_.Name -match "-ConsultantBundle-$artifactVersion$"
+            }
 
-         foreach ($dir in $assetDirs) {
-           $zipPath = Join-Path $out "$($dir.Name).zip"
+          foreach ($dir in $assetDirs) {
+            $zipPath = Join-Path $out "$($dir.Name).zip"
 
-           Compress-Archive `
-             -Path (Join-Path $dir.FullName "*") `
-             -DestinationPath $zipPath `
-             -Force
-         }
+            Compress-Archive `
+              -Path (Join-Path $dir.FullName "*") `
+              -DestinationPath $zipPath `
+              -Force
+          }
 
-     - name: Create GitHub release
-id: githubRelease
-shell: pwsh
-env:
-GH_TOKEN: ${{ github.token }}
-run: |
-         $tag = "${{ steps.release.outputs.tag }}"
-         $title = "${{ steps.release.outputs.title }}"
-         $isPrerelease = "${{ steps.release.outputs.prerelease }}"
+      - name: Create GitHub release
+        id: githubRelease
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ steps.release.outputs.tag }}"
+          $title = "${{ steps.release.outputs.title }}"
+          $isPrerelease = "${{ steps.release.outputs.prerelease }}"
 
-         $assets = Get-ChildItem -Path "release-assets" -Filter "*.zip" | ForEach-Object {
-           $_.FullName
-         }
+          $assets = Get-ChildItem -Path "release-assets" -Filter "*.zip" | ForEach-Object {
+            $_.FullName
+          }
 
-         if (-not $assets -or $assets.Count -eq 0) {
-           throw "No release assets found."
-         }
+          if (-not $assets -or $assets.Count -eq 0) {
+            throw "No release assets found."
+          }
 
-         gh release delete $tag `
-           --repo "${{ github.repository }}" `
-           --yes `
-           --cleanup-tag `
-           --quiet 2>$null
+          gh release delete $tag `
+            --repo "${{ github.repository }}" `
+            --yes `
+            --cleanup-tag `
+            --quiet 2>$null
 
-         $args = @("release", "create", $tag)
-         $args += $assets
-         $args += @(
-           "--repo", "${{ github.repository }}",
-           "--title", $title,
-           "--notes", "Automatisch erzeugter Release aus AL-Go Build.",
-           "--target", "${{ github.event.workflow_run.head_sha }}"
-         )
+          $args = @("release", "create", $tag)
+          $args += $assets
+          $args += @(
+            "--repo", "${{ github.repository }}",
+            "--title", $title,
+            "--notes", "Automatisch erzeugter Release aus AL-Go Build.",
+            "--target", "${{ github.event.workflow_run.head_sha }}"
+          )
 
-         if ($isPrerelease -eq "true") {
-           $args += "--prerelease"
-         }
+          if ($isPrerelease -eq "true") {
+            $args += "--prerelease"
+          }
 
-         gh @args
+          gh @args
 
-         $releaseUrl = gh release view $tag --repo "${{ github.repository }}" --json url --jq ".url"
-         Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "releaseUrl=$releaseUrl"
+          $releaseUrl = gh release view $tag --repo "${{ github.repository }}" --json url --jq ".url"
+          Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "releaseUrl=$releaseUrl"
 
-     - name: Upload consultant bundle to Azure Blob Storage
-id: blob
-        if: steps.metadata.outputs.uploadConsultantBundle == 'True'
-        if: steps.metadata.outputs.publishBundleUrl == 'True'
-shell: pwsh
-env:
-AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
-run: |
-         $azureCredentials = $env:AZURE_CREDENTIALS | ConvertFrom-Json
+      - name: Call BC Platform Automation
+        if: steps.metadata.outputs.createReleaseHubEntry == 'True'
+        shell: pwsh
+        run: |
+          $payload = @{
+            source = "github-auto-release"
+            repository = "${{ github.repository }}"
+            owner = "${{ github.repository_owner }}"
+            repo = "${{ github.event.repository.name }}"
+            releaseName = "${{ steps.metadata.outputs.releaseName }}"
+            bcMajor = [int]"${{ steps.metadata.outputs.bcMajor }}"
+            deploymentType = "${{ steps.metadata.outputs.deploymentType }}"
+            version = "${{ steps.release.outputs.appVersion }}"
+            tagName = "${{ steps.release.outputs.tag }}"
+            releaseType = "${{ steps.release.outputs.packageType }}"
+            releaseUrl = "${{ steps.githubRelease.outputs.releaseUrl }}"
+            releaseDate = "$(Get-Date -Format yyyy-MM-dd)"
+            bundleUrl = "${{ steps.githubRelease.outputs.releaseUrl }}"
+          } | ConvertTo-Json -Depth 20
 
-         if (-not $azureCredentials.StorageAccountName) {
-           throw "StorageAccountName is missing in AZURE_CREDENTIALS."
-         }
+          $headers = @{
+              "x-bc-platform-secret" = "${{ secrets.BC_PLATFORM_AUTOMATION_SECRET }}"
+          }
 
-         $storageAccountName = $azureCredentials.StorageAccountName
-         $containerName = "releases"
-
-         az login `
-           --service-principal `
-           --username $azureCredentials.ClientId `
-           --password $azureCredentials.ClientSecret `
-           --tenant $azureCredentials.TenantId
-
-         az account set --subscription $azureCredentials.SubscriptionId
-
-         $releaseName = "${{ steps.metadata.outputs.releaseName }}"
-
-         $customerSlug = $releaseName.ToLowerInvariant()
-         $customerSlug = $customerSlug -replace "ä", "ae"
-         $customerSlug = $customerSlug -replace "ö", "oe"
-         $customerSlug = $customerSlug -replace "ü", "ue"
-         $customerSlug = $customerSlug -replace "ß", "ss"
-         $customerSlug = $customerSlug -replace "[^a-z0-9]+", "-"
-         $customerSlug = $customerSlug.Trim("-")
-
-         $appVersion = "${{ steps.release.outputs.appVersion }}"
-         $releaseFolder = "${{ steps.release.outputs.releaseFolder }}"
-
-          $bundleAssets = Get-ChildItem -Path "release-assets" -Filter "*ConsultantBundle*.zip"
-         
-         if (-not $bundleAssets -or $bundleAssets.Count -eq 0) {
-           Write-Host "No ConsultantBundle asset found. Falling back to Apps asset."
-           $bundleAssets = Get-ChildItem -Path "release-assets" -Filter "*Apps*.zip"
-         }
-         
-         if (-not $bundleAssets -or $bundleAssets.Count -eq 0) {
-           Write-Host "No ConsultantBundle or Apps asset found. Skipping Blob Storage upload."
-           exit 0
-         }
-
-         if (-not $consultantBundles -or $consultantBundles.Count -eq 0) {
-           Write-Host "No ConsultantBundle asset found. Skipping Blob Storage upload."
-           exit 0
-         }
-
-         $bundleUrls = @()
-
-         foreach ($bundle in $bundleAssets) {
-           $safeBundleName = $bundle.Name -replace "\s+", "-"
-           $blobName = "$customerSlug/$releaseFolder/$appVersion/$safeBundleName"
-
-           az storage blob upload `
-             --account-name $storageAccountName `
-             --container-name $containerName `
-             --name $blobName `
-             --file $bundle.FullName `
-             --auth-mode login `
-             --overwrite true
-
-           $expiry = (Get-Date).ToUniversalTime().AddDays(7).ToString("yyyy-MM-ddTHH:mm:ssZ")
-
-           $sasToken = az storage blob generate-sas `
-             --account-name $storageAccountName `
-             --container-name $containerName `
-             --name $blobName `
-             --permissions r `
-             --expiry $expiry `
-             --auth-mode login `
-             --as-user `
-             --output tsv
-
-           if (-not $sasToken) {
-             throw "SAS token could not be generated."
-           }
-
-           $blobUrl = "https://$storageAccountName.blob.core.windows.net/$containerName/$blobName`?$sasToken"
-           $bundleUrls += $blobUrl
-         }
-
-         $bundleUrl = $bundleUrls[0]
-         Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "bundleUrl=$bundleUrl"
-
-     - name: Call BC Platform Automation
-if: steps.metadata.outputs.createReleaseHubEntry == 'True'
-shell: pwsh
-run: |
-         $payload = @{
-           source = "github-auto-release"
-           repository = "${{ github.repository }}"
-           owner = "${{ github.repository_owner }}"
-           repo = "${{ github.event.repository.name }}"
-           releaseName = "${{ steps.metadata.outputs.releaseName }}"
-           bcMajor = [int]"${{ steps.metadata.outputs.bcMajor }}"
-           deploymentType = "${{ steps.metadata.outputs.deploymentType }}"
-           version = "${{ steps.release.outputs.appVersion }}"
-           tagName = "${{ steps.release.outputs.tag }}"
-           releaseType = "${{ steps.release.outputs.packageType }}"
-           releaseUrl = "${{ steps.githubRelease.outputs.releaseUrl }}"
-           releaseDate = "$(Get-Date -Format yyyy-MM-dd)"
-           bundleUrl = "${{ steps.blob.outputs.bundleUrl }}"
-         } | ConvertTo-Json -Depth 20
-
-         $headers = @{
-             "x-bc-platform-secret" = "${{ secrets.BC_PLATFORM_AUTOMATION_SECRET }}"
-         }
-
-         Invoke-RestMethod `
-             -Method Post `
-             -Uri "${{ secrets.BC_PLATFORM_AUTOMATION_URL }}/api/release" `
-             -Headers $headers `
-             -ContentType "application/json" `
-             -Body $payload
+          Invoke-RestMethod `
+              -Method Post `
+              -Uri "${{ secrets.BC_PLATFORM_AUTOMATION_URL }}/api/release" `
+              -Headers $headers `
+              -ContentType "application/json" `
+              -Body $payload
