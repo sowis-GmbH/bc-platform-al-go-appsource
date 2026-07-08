@@ -11,7 +11,12 @@ permissions:
 
 jobs:
   auto-release:
-    if: false
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      (
+        github.event.workflow_run.head_branch == 'main' ||
+        startsWith(github.event.workflow_run.head_branch, 'release/')
+      )
     runs-on: ubuntu-latest-m
 
     steps:
