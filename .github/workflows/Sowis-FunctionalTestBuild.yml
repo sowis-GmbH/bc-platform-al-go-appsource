@@ -140,6 +140,24 @@ jobs:
             origin \
             "${{ steps.branch.outputs.name }}"
 
+      - name: Trigger AL-Go CI/CD
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GHTOKENWORKFLOW }}
+          script: |
+            const branchName = '${{ steps.branch.outputs.name }}';
+
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'CICD.yaml',
+              ref: branchName
+            });
+
+            core.info(
+              `AL-Go CI/CD was triggered for branch ${branchName}.`
+            );
+
       - name: Display result
         shell: bash
         run: |
