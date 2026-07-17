@@ -40,6 +40,71 @@ jobs:
           Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "createConsultantBundle=$($deployment.createConsultantBundle)"
           Add-Content -Encoding UTF8 -Path $env:GITHUB_OUTPUT -Value "uploadConsultantBundle=$($deployment.uploadConsultantBundle)"
 
+      - name: Read functional test metadata
+        id: functionalTest
+        if: startsWith(github.event.workflow_run.head_branch, 'functional-test/')
+        shell: pwsh
+        run: |
+          $metadataPath = ".functional-test/request.json"
+
+          if (-not (Test-Path $metadataPath)) {
+            throw "Functional test metadata file '$metadataPath' was not found."
+          }
+
+          $metadata =
+            Get-Content $metadataPath -Raw |
+            ConvertFrom-Json
+
+          if (-not $metadata.testIssueNumber) {
+            throw "Metadata property 'testIssueNumber' is missing."
+          }
+
+          if (-not $metadata.statusCommentId) {
+            throw "Metadata property 'statusCommentId' is missing."
+          }
+
+          if (-not $metadata.correlationId) {
+            throw "Metadata property 'correlationId' is missing."
+          }
+
+          if (-not $metadata.requestedByLogin) {
+            throw "Metadata property 'requestedByLogin' is missing."
+          }
+
+          if (-not $metadata.projectRepository) {
+            throw "Metadata property 'projectRepository' is missing."
+          }
+
+          Add-Content `
+            -Encoding UTF8 `
+            -Path $env:GITHUB_OUTPUT `
+            -Value "testIssueNumber=$($metadata.testIssueNumber)"
+
+          Add-Content `
+            -Encoding UTF8 `
+            -Path $env:GITHUB_OUTPUT `
+            -Value "requestCommentId=$($metadata.requestCommentId)"
+
+          Add-Content `
+            -Encoding UTF8 `
+            -Path $env:GITHUB_OUTPUT `
+            -Value "statusCommentId=$($metadata.statusCommentId)"
+
+          Add-Content `
+            -Encoding UTF8 `
+            -Path $env:GITHUB_OUTPUT `
+            -Value "correlationId=$($metadata.correlationId)"
+
+          Add-Content `
+            -Encoding UTF8 `
+            -Path $env:GITHUB_OUTPUT `
+            -Value "requestedByLogin=$($metadata.requestedByLogin)"
+
+          Add-Content `
+            -Encoding UTF8 `
+            -Path $env:GITHUB_OUTPUT `
+            -Value "projectRepository=$($metadata.projectRepository)"
+
       - name: Download build artifacts
         uses: actions/download-artifact@v4
         with:
@@ -188,7 +253,7 @@ jobs:
               [int]"${{ steps.functionalTest.outputs.testIssueNumber }}"
 
             statusCommentId =
-              "${{ steps.functionalTest.outputs.statusCommentId }}"
+              [int64]"${{ steps.functionalTest.outputs.statusCommentId }}"
 
             correlationId =
               "${{ steps.functionalTest.outputs.correlationId }}"
@@ -218,7 +283,7 @@ jobs:
               "${{ steps.githubRelease.outputs.releaseUrl }}"
 
             workflowRunId =
-              "${{ github.event.workflow_run.id }}"
+              [int64]"${{ github.event.workflow_run.id }}"
 
             workflowRunUrl =
               $workflowRunUrl
