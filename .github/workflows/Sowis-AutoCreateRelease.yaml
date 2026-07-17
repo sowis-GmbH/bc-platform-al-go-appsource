@@ -243,6 +243,43 @@ jobs:
         if: startsWith(github.event.workflow_run.head_branch, 'functional-test/')
         shell: pwsh
         run: |
+          $metadataPath = ".functional-test/request.json"
+
+          if (-not (Test-Path $metadataPath)) {
+            throw "Functional test metadata file '$metadataPath' was not found."
+          }
+
+          $metadata =
+            Get-Content $metadataPath -Raw |
+            ConvertFrom-Json
+
+          if (-not $metadata.testIssueNumber) {
+            throw "Metadata property 'testIssueNumber' is missing."
+          }
+
+          if (-not $metadata.statusCommentId) {
+            throw "Metadata property 'statusCommentId' is missing."
+          }
+
+          if (-not $metadata.correlationId) {
+            throw "Metadata property 'correlationId' is missing."
+          }
+
+          if (-not $metadata.requestedByLogin) {
+            throw "Metadata property 'requestedByLogin' is missing."
+          }
+
+          if (-not $metadata.projectRepository) {
+            throw "Metadata property 'projectRepository' is missing."
+          }
+
+          Write-Host "Functional test metadata loaded:"
+          Write-Host "Test issue: $($metadata.testIssueNumber)"
+          Write-Host "Status comment: $($metadata.statusCommentId)"
+          Write-Host "Correlation ID: $($metadata.correlationId)"
+          Write-Host "Requested by: $($metadata.requestedByLogin)"
+          Write-Host "Project repository: $($metadata.projectRepository)"
+
           $workflowRunUrl =
             "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.id }}"
 
@@ -250,19 +287,19 @@ jobs:
             status = "success"
 
             testIssueNumber =
-              [int]"${{ steps.functionalTest.outputs.testIssueNumber }}"
+              [int]$metadata.testIssueNumber
 
             statusCommentId =
-              [int64]"${{ steps.functionalTest.outputs.statusCommentId }}"
+              [int64]$metadata.statusCommentId
 
             correlationId =
-              "${{ steps.functionalTest.outputs.correlationId }}"
+              [string]$metadata.correlationId
 
             requestedByLogin =
-              "${{ steps.functionalTest.outputs.requestedByLogin }}"
+              [string]$metadata.requestedByLogin
 
             projectRepository =
-              "${{ steps.functionalTest.outputs.projectRepository }}"
+              [string]$metadata.projectRepository
 
             productRepository =
               "${{ github.repository }}"
@@ -288,6 +325,8 @@ jobs:
             workflowRunUrl =
               $workflowRunUrl
           } | ConvertTo-Json -Depth 20
+
+          Write-Host "Sending functional test callback..."
 
           $headers = @{
             "x-bc-platform-secret" =
