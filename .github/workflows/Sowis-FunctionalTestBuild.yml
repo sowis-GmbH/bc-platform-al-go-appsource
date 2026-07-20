@@ -132,6 +132,8 @@ jobs:
 
       - name: Write functional test metadata
         shell: pwsh
+        env:
+          DEVELOPMENTS_JSON: ${{ inputs.developmentsJson }}
         run: |
           $metadataDirectory = ".functional-test"
           $metadataFile = Join-Path $metadataDirectory "request.json"
@@ -141,22 +143,44 @@ jobs:
             -Path $metadataDirectory `
             -Force | Out-Null
 
+          if ([string]::IsNullOrWhiteSpace($env:DEVELOPMENTS_JSON)) {
+              throw "developmentsJson is missing."
+          }
+
+          try {
+              $developments =
+                  $env:DEVELOPMENTS_JSON |
+                  ConvertFrom-Json
+          }
+          catch {
+              throw "developmentsJson is not valid JSON: $($_.Exception.Message)"
+          }
+
+          if (@($developments).Count -eq 0) {
+              throw "developmentsJson does not contain any Development-Issues."
+          }
+
           $metadata = @{
-            testIssueNumber = [int]"${{ inputs.testIssueNumber }}"
-            requestCommentId = "${{ inputs.requestCommentId }}"
-            statusCommentId = "${{ inputs.statusCommentId }}"
-            requestedByLogin = "${{ inputs.requestedByLogin }}"
-            correlationId = "${{ inputs.correlationId }}"
-            baseBranch = "${{ inputs.baseBranch }}"
-            temporaryBranch = "${{ steps.branch.outputs.name }}"
-            projectRepository = "sowis-GmbH/bc-platform-project-management"
+              testIssueNumber = [int]"${{ inputs.testIssueNumber }}"
+              requestCommentId = "${{ inputs.requestCommentId }}"
+              statusCommentId = "${{ inputs.statusCommentId }}"
+              requestedByLogin = "${{ inputs.requestedByLogin }}"
+              correlationId = "${{ inputs.correlationId }}"
+              baseBranch = "${{ inputs.baseBranch }}"
+              temporaryBranch = "${{ steps.branch.outputs.name }}"
+              projectRepository = "sowis-GmbH/bc-platform-project-management"
+              productRepository = "${{ github.repository }}"
+              developments = @($developments)
           }
 
           $metadata |
-            ConvertTo-Json -Depth 20 |
-            Set-Content `
-              -Path $metadataFile `
-              -Encoding UTF8
+              ConvertTo-Json -Depth 20 |
+              Set-Content `
+                  -Path $metadataFile `
+                  -Encoding UTF8
+
+          Write-Host "Functional-test metadata written:"
+          Get-Content $metadataFile
 
           git add $metadataFile
 

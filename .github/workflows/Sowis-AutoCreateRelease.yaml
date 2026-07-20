@@ -324,6 +324,10 @@ jobs:
 
             workflowRunUrl =
               $workflowRunUrl
+
+            developmentIssues =
+              @($metadata.developments)
+              
           } | ConvertTo-Json -Depth 20
 
           Write-Host "Sending functional test callback..."
