@@ -327,7 +327,7 @@ jobs:
 
             developmentIssues =
               @($metadata.developments)
-              
+
           } | ConvertTo-Json -Depth 20
 
           Write-Host "Sending functional test callback..."
@@ -362,6 +362,7 @@ jobs:
             releaseUrl = "${{ steps.githubRelease.outputs.releaseUrl }}"
             releaseDate = "$(Get-Date -Format yyyy-MM-dd)"
             bundleUrl = "${{ steps.githubRelease.outputs.releaseUrl }}"
+            headSha = "${{ github.event.workflow_run.head_sha }}"
           } | ConvertTo-Json -Depth 20
 
           $headers = @{
