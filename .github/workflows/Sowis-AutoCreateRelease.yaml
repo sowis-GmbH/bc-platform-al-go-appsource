@@ -344,6 +344,33 @@ jobs:
             -ContentType "application/json" `
             -Body $payload
 
+      - name: Report successful main build
+        if: github.event.workflow_run.head_branch == 'main'
+        shell: pwsh
+        run: |
+          $payload = @{
+            owner =
+              "${{ github.repository_owner }}"
+      
+            repository =
+              "${{ github.event.repository.name }}"
+      
+            commitSha =
+              "${{ github.event.workflow_run.head_sha }}"
+          } | ConvertTo-Json
+      
+          $headers = @{
+            "x-bc-platform-secret" =
+              "${{ secrets.BC_PLATFORM_AUTOMATION_SECRET }}"
+          }
+      
+          Invoke-RestMethod `
+            -Method Post `
+            -Uri "${{ secrets.BC_PLATFORM_AUTOMATION_URL }}/api/master-build-result" `
+            -Headers $headers `
+            -ContentType "application/json" `
+            -Body $payload
+
       - name: Call BC Platform Automation
         if: steps.metadata.outputs.createReleaseHubEntry == 'True'
         shell: pwsh
