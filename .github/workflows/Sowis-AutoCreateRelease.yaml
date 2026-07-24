@@ -357,6 +357,15 @@ jobs:
       
             commitSha =
               "${{ github.event.workflow_run.head_sha }}"
+      
+            releaseVersion =
+              "${{ steps.release.outputs.tag }}"
+      
+            releaseUrl =
+              "${{ steps.githubRelease.outputs.releaseUrl }}"
+      
+            downloadUrl =
+              "${{ steps.githubRelease.outputs.releaseUrl }}"
           } | ConvertTo-Json
       
           $headers = @{
